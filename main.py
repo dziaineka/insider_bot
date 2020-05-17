@@ -1,15 +1,13 @@
 import logging
 
-import aiogram.utils.markdown as md
 from aiogram import Bot, Dispatcher, types
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram.dispatcher import FSMContext
-from aiogram.dispatcher.filters import Text
-from aiogram.dispatcher.filters.state import State, StatesGroup
-from aiogram.types import ParseMode
 from aiogram.utils import executor
+from aiogram.utils.exceptions import MessageNotModified
 
 import config
+from states import Form
 
 logging.basicConfig(level=logging.INFO)
 
@@ -20,108 +18,78 @@ storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
 
 
-# States
-class Form(StatesGroup):
-    name = State()  # Will be represented in storage as 'Form:name'
-    age = State()  # Will be represented in storage as 'Form:age'
-    gender = State()  # Will be represented in storage as 'Form:gender'
+async def welcome(message: types.Message, new_message=False):
+    text = 'Когда будете готовы поделиться информацией — нажмите на кнопку 👇'
+
+    keyboard = types.InlineKeyboardMarkup(row_width=1)
+
+    inside_button = types.InlineKeyboardButton(
+        text='Анонимное сообщение',
+        callback_data='/inside')
+
+    keyboard.add(inside_button)
+
+    if new_message:
+        await bot.send_message(message.chat.id,
+                               text,
+                               reply_markup=keyboard)
+    else:
+        try:
+            await bot.edit_message_text(text,
+                                        chat_id=message.chat.id,
+                                        message_id=message.message_id,
+                                        reply_markup=keyboard)
+        except MessageNotModified:
+            pass
+
+    await Form.preparing.set()
 
 
-@dp.message_handler(commands='start')
-async def cmd_start(message: types.Message):
-    """
-    Conversation's entry point
-    """
-    # Set state
-    await Form.name.set()
+@dp.callback_query_handler(lambda call: call.data == '/inside', state='*')
+async def invite_to_send_message(call, state: FSMContext):
+    await bot.answer_callback_query(call.id)
 
-    await message.reply("Hi there! What's your name?")
+    text = f'Пришлите сообщение и оно анонимно перешлется ' + \
+        f'администратору чата {config.CHAT_NAME}'
+
+    keyboard = types.InlineKeyboardMarkup(row_width=1)
+
+    cancel_button = types.InlineKeyboardButton(
+        text='Отмена',
+        callback_data='/cancel')
+
+    keyboard.add(cancel_button)
+
+    try:
+        await bot.edit_message_text(text,
+                                    chat_id=call.message.chat.id,
+                                    message_id=call.message.message_id,
+                                    reply_markup=keyboard)
+    except MessageNotModified:
+        pass
+
+    await Form.inside.set()
 
 
-# You can use state '*' if you need to handle all states
-@dp.message_handler(state='*', commands='cancel')
-@dp.message_handler(Text(equals='cancel', ignore_case=True), state='*')
-async def cancel_handler(message: types.Message, state: FSMContext):
-    """
-    Allow user to cancel any action
-    """
-    current_state = await state.get_state()
-    if current_state is None:
-        return
-
-    logging.info('Cancelling state %r', current_state)
-    # Cancel state and inform user about it
+@dp.callback_query_handler(lambda call: call.data == '/cancel', state='*')
+async def cancel_handler(call, state: FSMContext):
+    await bot.answer_callback_query(call.id)
     await state.finish()
-    # And remove keyboard (just in case)
-    await message.reply('Cancelled.', reply_markup=types.ReplyKeyboardRemove())
+    await welcome(call.message)
 
 
-@dp.message_handler(state=Form.name)
-async def process_name(message: types.Message, state: FSMContext):
-    """
-    Process user name
-    """
-    async with state.proxy() as data:
-        data['name'] = message.text
-
-    await Form.next()
-    await message.reply("How old are you?")
+@dp.message_handler(content_types=types.ContentTypes.ANY, state=Form.inside)
+async def catch_feedback(message: types.Message, state: FSMContext):
+    await message.send_copy(config.INSIDE_CHANNEL)
+    text = 'Спасибо за сообщение!'
+    await bot.send_message(message.chat.id, text)
+    await Form.preparing.set()
+    await welcome(message, new_message=True)
 
 
-# Check age. Age gotta be digit
-@dp.message_handler(lambda message: not message.text.isdigit(), state=Form.age)
-async def process_age_invalid(message: types.Message):
-    """
-    If age is invalid
-    """
-    return await message.reply("Age gotta be a number.\nHow old are you? (digits only)")
-
-
-@dp.message_handler(lambda message: message.text.isdigit(), state=Form.age)
-async def process_age(message: types.Message, state: FSMContext):
-    # Update state and data
-    await Form.next()
-    await state.update_data(age=int(message.text))
-
-    # Configure ReplyKeyboardMarkup
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, selective=True)
-    markup.add("Male", "Female")
-    markup.add("Other")
-
-    await message.reply("What is your gender?", reply_markup=markup)
-
-
-@dp.message_handler(lambda message: message.text not in ["Male", "Female", "Other"], state=Form.gender)
-async def process_gender_invalid(message: types.Message):
-    """
-    In this example gender has to be one of: Male, Female, Other.
-    """
-    return await message.reply("Bad gender name. Choose your gender from the keyboard.")
-
-
-@dp.message_handler(state=Form.gender)
-async def process_gender(message: types.Message, state: FSMContext):
-    async with state.proxy() as data:
-        data['gender'] = message.text
-
-        # Remove keyboard
-        markup = types.ReplyKeyboardRemove()
-
-        # And send message
-        await bot.send_message(
-            message.chat.id,
-            md.text(
-                md.text('Hi! Nice to meet you,', md.bold(data['name'])),
-                md.text('Age:', md.code(data['age'])),
-                md.text('Gender:', data['gender']),
-                sep='\n',
-            ),
-            reply_markup=markup,
-            parse_mode=ParseMode.MARKDOWN,
-        )
-
-    # Finish conversation
-    await state.finish()
+@dp.message_handler(content_types=types.ContentTypes.ANY, state='*')
+async def empty_state(message: types.Message):
+    await welcome(message, new_message=True)
 
 
 if __name__ == '__main__':
