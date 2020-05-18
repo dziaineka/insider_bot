@@ -1,3 +1,5 @@
-BOT_TOKEN = 'PUT_API_TOKEN_HERE'
-CHAT_NAME = '@some_chat_in_telegram'
-INSIDE_CHANNEL = '@some_channel_in_telegram'
+from os import getenv
+
+BOT_TOKEN = getenv('BOT_TOKEN')
+CHAT_NAME = getenv('CHAT_NAME')
+INSIDE_CHANNEL = getenv('INSIDE_CHANNEL')
