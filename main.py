@@ -50,7 +50,11 @@ async def invite_to_send_message(call, state: FSMContext):
     await bot.answer_callback_query(call.id)
 
     text = f'Пришлите сообщение и оно анонимно перешлется ' + \
-        f'администратору чата {config.CHAT_NAME}'
+        f'администратору чата "{config.CHAT_NAME}".\n\n' + \
+        "Если кто-то ожидает здесь ответа, то я не могу дать вам " + \
+        "ответ тут. Бот построен таким образом, что делает вас " + \
+        "анонимным и я не вижу кто именно пишет.\n\n" + \
+        "Поэтому пишите сразу все что хотите сказать."
 
     keyboard = types.InlineKeyboardMarkup(row_width=1)
 
